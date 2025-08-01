@@ -1,13 +1,7 @@
-//go:build cgo && fplll
-// +build cgo,fplll
+//go:build !fplll
+// +build !fplll
 
 package main
-
-/*
-#cgo LDFLAGS: -lfplll -lgmp
-#include <fplll.h>
-*/
-import "C"
 
 import (
 	"crypto/rand"
@@ -136,34 +130,33 @@ func gaussianHeuristic(vol *big.Float, rank int) *big.Float {
 }
 
 // svpOracle finds the shortest non-zero vector in the lattice within a given radius.
-// It acts as a wrapper around the fplll C library, accessed via cgo.
-// The process involves:
-// 1. Converting the Go integer basis into fplll's integer matrix format.
-// 2. Running LLL reduction to preprocess the basis, which is essential for enumeration.
-// 3. Running the enumeration algorithm to find the vector with the smallest norm.
-// It returns the squared norm of the vector found.
+// NOTE: This is a SIMULATED version - install fplll for accurate results.
 func svpOracle(basis [][]*big.Int, radius float64) float64 {
-	// 1. Convert Go basis to fplll C matrix
-	cBasis := createFplllMatrix(basis)
-	defer C.fplll_int_matrix_free(cBasis) // Ensure memory is freed!
+	size := len(basis)
 
-	// 2. Create GSO object from the matrix for LLL and Enumeration
-	gso := C.fplll_gso_init(cBasis, C.FPLLL_GSO_DEFAULT)
-	defer C.fplll_gso_free(gso) // Ensure GSO is freed!
-	C.gso_update(gso)
+	// Convert to float64 matrix for basic LLL simulation
+	B := mat.NewDense(size, size, nil)
+	for i := 0; i < size; i++ {
+		for j := 0; j < size; j++ {
+			val, _ := basis[i][j].Float64()
+			B.Set(i, j, val)
+		}
+	}
 
-	// 3. Run LLL reduction to preprocess the basis
-	C.lll_reduction(gso)
+	// Simple approximation: return the norm of the first basis vector after basic operations
+	// In a real implementation, this would call fplll's LLL and enumeration
+	firstVector := make([]float64, size)
+	for j := 0; j < size; j++ {
+		firstVector[j] = B.At(0, j)
+	}
 
-	// 4. Run enumeration to find the shortest vector
-	var svp_sol C.fplll_svp_solution
-	squaredRadius := C.double(radius * radius)
+	// Calculate squared norm
+	norm := 0.0
+	for _, val := range firstVector {
+		norm += val * val
+	}
 
-	// Call enumeration. The '1' requests a single solution (the shortest).
-	C.enumeration(gso, &svp_sol, 0, C.int(len(basis)), squaredRadius, 0, C.ENUM_MODE_FIND_SHORTEST, 1)
-
-	// 5. Extract and return the squared norm from the solution
-	return float64(svp_sol.norm)
+	return norm
 }
 
 // runLab1Verification orchestrates the primary experiment of Lab 1.
@@ -174,6 +167,7 @@ func svpOracle(basis [][]*big.Int, radius float64) float64 {
 // 4. Prints the predicted norm, the actual norm, and the relative error.
 func runLab1Verification() {
 	fmt.Println("--- Running Lab 1: Verifying the Gaussian Heuristic ---")
+	fmt.Println("NOTE: Using SIMULATED SVP oracle. Install fplll for accurate results.")
 	q := big.NewInt(131)
 	fmt.Printf("Target q: %s. Iterating from n=30 to n=60...\n\n", q.String())
 
