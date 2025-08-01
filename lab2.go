@@ -1,80 +1,154 @@
-//go:build cgo && fplll
-// +build cgo,fplll
-
 package main
 
-/*
-#cgo LDFLAGS: -lfplll -lgmp
-#include <fplll.h>
-*/
-import "C"
-
 import (
-	"crypto/rand"
 	"fmt"
 	"math"
 	"math/big"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 )
 
-// runBKZ performs BKZ reduction on a given basis using the specified block size beta.
-// This function is a wrapper around the fplll C library.
-// The process is:
-// 1. Convert the Go basis to an fplll matrix.
-// 2. Call the BKZ reduction algorithm.
-// 3. After reduction, extract the squared norms of the Gram-Schmidt vectors.
-// 4. Compute the final profile as the log base 2 of the norms (log(||b_i*||)).
-// The resulting profile is returned for later analysis/plotting.
+// runBKZ performs BKZ reduction on a given basis using the fplll command line tool.
+// It writes the basis to a temporary file, calls fplll -a bkz, and parses the reduced basis
+// to compute the Gram-Schmidt profile using Go's matrix operations.
 func runBKZ(basis [][]*big.Int, beta int) []float64 {
 	rank := len(basis)
 
-	// 1. Convert Go basis to fplll C matrix
-	cBasis := createFplllMatrix(basis)
-	defer C.fplll_int_matrix_free(cBasis)
-
-	// 2. Create GSO object
-	gso := C.fplll_gso_init(cBasis, C.FPLLL_GSO_DEFAULT)
-	defer C.fplll_gso_free(gso)
-	C.gso_update(gso)
-
-	// 3. Set up BKZ parameters
-	params := C.fplll_bkz_param_init()
-	defer C.fplll_bkz_param_free(params)
-	params.block_size = C.int(beta)
-	// Use default strategies for the algorithm
-	C.fplll_bkz_param_set_strategies(params, C.int(beta), C.BKZ_DEFAULT_STRATEGY)
-
-	// 4. Run BKZ reduction
-	C.bkz_reduction(gso, params)
-	C.gso_update(gso) // Update GSO object with the reduced basis info
-
-	// 5. Extract the profile (log2 of Gram-Schmidt vector norms)
-	profile := make([]float64, rank)
-	for i := 0; i < rank; i++ {
-		// gso_get_r_d returns the squared norm ||b_i*||^2
-		squaredNorm := C.gso_get_r_d(gso, C.int(i), C.int(i))
-		norm := math.Sqrt(float64(squaredNorm))
-		profile[i] = math.Log2(norm)
+	// Write basis to temporary file
+	tmpFile := "/tmp/lattice_basis_bkz.txt"
+	err := writeBasisToFile(basis, tmpFile)
+	if err != nil {
+		fmt.Printf("Error writing basis to file: %v\n", err)
+		return make([]float64, rank)
 	}
+	defer os.Remove(tmpFile)
+
+	// Call fplll -a bkz with specified block size
+	cmd := exec.Command("fplll", "-a", "bkz", "-b", strconv.Itoa(beta), tmpFile)
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Printf("Error running fplll BKZ: %v\n", err)
+		return make([]float64, rank)
+	}
+
+	// Parse the reduced basis from output
+	reducedBasis := parseMatrixOutput(string(output))
+
+	if reducedBasis == nil || len(reducedBasis) != rank {
+		fmt.Printf("Error parsing BKZ output\n")
+		return make([]float64, rank)
+	}
+
+	// Compute Gram-Schmidt profile
+	profile := computeGramSchmidtProfile(reducedBasis)
 
 	return profile
 }
 
-// genRandomBasis generates a random square lattice basis of the given rank.
-// This is used for Lab 2 where we need a general random lattice, not necessarily q-ary.
-func genRandomBasis(rank int) [][]*big.Int {
-	basis := make([][]*big.Int, rank)
+// parseMatrixOutput parses the matrix output from fplll
+func parseMatrixOutput(output string) [][]*big.Int {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) == 0 {
+		return nil
+	}
 
-	for i := 0; i < rank; i++ {
-		basis[i] = make([]*big.Int, rank)
-		for j := 0; j < rank; j++ {
-			// Generate random integers in range [-100, 100]
-			randVal, _ := rand.Int(rand.Reader, big.NewInt(201))
-			randVal.Sub(randVal, big.NewInt(100))
-			basis[i][j] = new(big.Int).Set(randVal)
+	var matrix [][]*big.Int
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || (!strings.HasPrefix(line, "[") && !strings.Contains(line, "[")) {
+			continue
+		}
+
+		// Remove brackets and parse row
+		line = strings.Trim(line, "[]")
+		if line == "" {
+			continue
+		}
+
+		coords := strings.Fields(line)
+		if len(coords) == 0 {
+			continue
+		}
+
+		var row []*big.Int
+		for _, coord := range coords {
+			val := new(big.Int)
+			if _, ok := val.SetString(coord, 10); ok {
+				row = append(row, val)
+			}
+		}
+
+		if len(row) > 0 {
+			matrix = append(matrix, row)
 		}
 	}
 
-	return basis
+	return matrix
+}
+
+// computeGramSchmidtProfile computes the log2 of Gram-Schmidt vector norms
+func computeGramSchmidtProfile(basis [][]*big.Int) []float64 {
+	n := len(basis)
+	if n == 0 {
+		return nil
+	}
+
+	// Convert to float64 for numerical stability
+	B := make([][]float64, n)
+	for i := 0; i < n; i++ {
+		B[i] = make([]float64, n)
+		for j := 0; j < n; j++ {
+			if j < len(basis[i]) {
+				val, _ := basis[i][j].Float64()
+				B[i][j] = val
+			}
+		}
+	}
+
+	// Perform Gram-Schmidt orthogonalization
+	profile := make([]float64, n)
+	orthoBasis := make([][]float64, n)
+
+	for i := 0; i < n; i++ {
+		// Copy current vector
+		orthoBasis[i] = make([]float64, n)
+		copy(orthoBasis[i], B[i])
+
+		// Orthogonalize against previous vectors
+		for k := 0; k < i; k++ {
+			dot := 0.0
+			orthogNormSq := 0.0
+
+			for j := 0; j < n; j++ {
+				dot += B[i][j] * orthoBasis[k][j]
+				orthogNormSq += orthoBasis[k][j] * orthoBasis[k][j]
+			}
+
+			if orthogNormSq > 1e-10 {
+				coeff := dot / orthogNormSq
+				for j := 0; j < n; j++ {
+					orthoBasis[i][j] -= coeff * orthoBasis[k][j]
+				}
+			}
+		}
+
+		// Compute norm and take log2
+		norm := 0.0
+		for j := 0; j < n; j++ {
+			norm += orthoBasis[i][j] * orthoBasis[i][j]
+		}
+
+		if norm > 1e-10 {
+			profile[i] = math.Log2(math.Sqrt(norm))
+		} else {
+			profile[i] = -50 // Very small norm
+		}
+	}
+
+	return profile
 }
 
 // runLab2Verification orchestrates the experiment for Lab 2.
@@ -83,12 +157,16 @@ func genRandomBasis(rank int) [][]*big.Int {
 // profile in a plot is evidence for the Geometric Series Assumption.
 func runLab2Verification() {
 	fmt.Println("--- Running Lab 2: Verifying the Geometric Series Assumption ---")
+	fmt.Println("Using FPLLL command-line tool for accurate BKZ reduction.")
 
 	rank := 30
 	beta := 20
+	// Use a large prime for the coefficient range to ensure a "hard" lattice
+	q := big.NewInt(100003) // A reasonably large prime
 
-	fmt.Printf("Generating a random lattice of rank %d.\n", rank)
-	basis := genRandomBasis(rank)
+	fmt.Printf("Generating a random lattice of rank %d with coefficients up to %s.\n", rank, q.String())
+	// Pass 'q' to the new generator
+	basis := genRandomBasis(rank, q)
 
 	fmt.Printf("Running BKZ reduction with block size beta = %d...\n", beta)
 	profile := runBKZ(basis, beta)

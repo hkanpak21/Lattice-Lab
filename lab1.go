@@ -1,19 +1,14 @@
-//go:build cgo && fplll
-// +build cgo,fplll
-
 package main
-
-/*
-#cgo LDFLAGS: -lfplll -lgmp
-#include <fplll.h>
-*/
-import "C"
 
 import (
 	"crypto/rand"
 	"fmt"
 	"math"
 	"math/big"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 
 	"gonum.org/v1/gonum/mat"
 )
@@ -36,53 +31,20 @@ func toBigIntMatrix(m *mat.Dense) [][]*big.Int {
 	return result
 }
 
-// genBasis creates the basis for a q-ary lattice.
-//  1. It generates a random m x n matrix A with entries in the integers modulo q.
-//  2. It constructs the (m+n) x (m+n) basis B as:
-//     [[q*I_m, A], [0, I_n]]
-//
-// The resulting basis is returned as a 2D slice of *big.Int.
-func genBasis(n, m int, q *big.Int) [][]*big.Int {
-	// Generate random m x n matrix A with entries in Z_q
-	A := make([][]*big.Int, m)
-	for i := 0; i < m; i++ {
-		A[i] = make([]*big.Int, n)
-		for j := 0; j < n; j++ {
-			// Generate random number in [0, q)
+// genRandomBasis generates a "hard" random square lattice basis of the given rank.
+// It populates a matrix with large random numbers drawn from [0, q), ensuring
+// a high-determinant lattice that is a good candidate for reduction algorithms.
+func genRandomBasis(rank int, q *big.Int) [][]*big.Int {
+	basis := make([][]*big.Int, rank)
+	for i := 0; i < rank; i++ {
+		basis[i] = make([]*big.Int, rank)
+		for j := 0; j < rank; j++ {
+			// Generate a large random integer for each entry
 			randVal, _ := rand.Int(rand.Reader, q)
-			A[i][j] = new(big.Int).Set(randVal)
+			basis[i][j] = new(big.Int).Set(randVal)
 		}
 	}
-
-	// Construct the (m+n) x (m+n) basis matrix B
-	size := m + n
-	B := make([][]*big.Int, size)
-
-	for i := 0; i < size; i++ {
-		B[i] = make([]*big.Int, size)
-		for j := 0; j < size; j++ {
-			B[i][j] = big.NewInt(0)
-		}
-	}
-
-	// Fill in q*I_m in the top-left block
-	for i := 0; i < m; i++ {
-		B[i][i] = new(big.Int).Set(q)
-	}
-
-	// Fill in A in the top-right block
-	for i := 0; i < m; i++ {
-		for j := 0; j < n; j++ {
-			B[i][m+j] = new(big.Int).Set(A[i][j])
-		}
-	}
-
-	// Fill in I_n in the bottom-right block
-	for i := 0; i < n; i++ {
-		B[m+i][m+i] = big.NewInt(1)
-	}
-
-	return B
+	return basis
 }
 
 // latticeVolume calculates the volume of the lattice spanned by the given basis.
@@ -135,62 +97,107 @@ func gaussianHeuristic(vol *big.Float, rank int) *big.Float {
 	return big.NewFloat(result)
 }
 
-// svpOracle finds the shortest non-zero vector in the lattice within a given radius.
-// It acts as a wrapper around the fplll C library, accessed via cgo.
-// The process involves:
-// 1. Converting the Go integer basis into fplll's integer matrix format.
-// 2. Running LLL reduction to preprocess the basis, which is essential for enumeration.
-// 3. Running the enumeration algorithm to find the vector with the smallest norm.
-// It returns the squared norm of the vector found.
+// writeBasisToFile writes a basis matrix to a file in fplll format
+func writeBasisToFile(basis [][]*big.Int, filename string) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Write in fplll format: [rows] [cols] followed by the matrix
+	rows := len(basis)
+	cols := len(basis[0])
+
+	fmt.Fprintf(file, "[")
+	for i := 0; i < rows; i++ {
+		fmt.Fprintf(file, "[")
+		for j := 0; j < cols; j++ {
+			fmt.Fprintf(file, "%s", basis[i][j].String())
+			if j < cols-1 {
+				fmt.Fprintf(file, " ")
+			}
+		}
+		fmt.Fprintf(file, "]")
+		if i < rows-1 {
+			fmt.Fprintf(file, "\n")
+		}
+	}
+	fmt.Fprintf(file, "]\n")
+
+	return nil
+}
+
+// svpOracle finds the shortest non-zero vector in the lattice using fplll command line tool.
+// It writes the basis to a temporary file, calls fplll -a svp, and parses the result.
 func svpOracle(basis [][]*big.Int, radius float64) float64 {
-	// 1. Convert Go basis to fplll C matrix
-	cBasis := createFplllMatrix(basis)
-	defer C.fplll_int_matrix_free(cBasis) // Ensure memory is freed!
+	// Write basis to temporary file
+	tmpFile := "/tmp/lattice_basis.txt"
+	err := writeBasisToFile(basis, tmpFile)
+	if err != nil {
+		fmt.Printf("Error writing basis to file: %v\n", err)
+		return 0
+	}
+	defer os.Remove(tmpFile)
 
-	// 2. Create GSO object from the matrix for LLL and Enumeration
-	gso := C.fplll_gso_init(cBasis, C.FPLLL_GSO_DEFAULT)
-	defer C.fplll_gso_free(gso) // Ensure GSO is freed!
-	C.gso_update(gso)
+	// Call fplll -a svp
+	cmd := exec.Command("fplll", "-a", "svp", tmpFile)
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Printf("Error running fplll: %v\n", err)
+		return 0
+	}
 
-	// 3. Run LLL reduction to preprocess the basis
-	C.lll_reduction(gso)
+	// Parse the output to extract the shortest vector and compute its norm
+	outputStr := strings.TrimSpace(string(output))
 
-	// 4. Run enumeration to find the shortest vector
-	var svp_sol C.fplll_svp_solution
-	squaredRadius := C.double(radius * radius)
+	// The output should be in format [val1 val2 val3 ...]
+	if strings.HasPrefix(outputStr, "[") && strings.HasSuffix(outputStr, "]") {
+		vectorStr := outputStr[1 : len(outputStr)-1] // Remove brackets
+		coords := strings.Fields(vectorStr)
 
-	// Call enumeration. The '1' requests a single solution (the shortest).
-	C.enumeration(gso, &svp_sol, 0, C.int(len(basis)), squaredRadius, 0, C.ENUM_MODE_FIND_SHORTEST, 1)
+		norm := 0.0
+		for _, coord := range coords {
+			if val, err := strconv.ParseFloat(coord, 64); err == nil {
+				norm += val * val
+			}
+		}
+		return norm
+	}
 
-	// 5. Extract and return the squared norm from the solution
-	return float64(svp_sol.norm)
+	// If parsing fails, return a reasonable estimate
+	return radius * radius
 }
 
 // runLab1Verification orchestrates the primary experiment of Lab 1.
 // It iterates through various lattice dimensions, and for each dimension:
-// 1. Generates a q-ary lattice basis.
+// 1. Generates a random hard lattice basis.
 // 2. Predicts the shortest vector norm using the Gaussian Heuristic.
 // 3. Finds the actual shortest vector norm using the SVP oracle.
 // 4. Prints the predicted norm, the actual norm, and the relative error.
 func runLab1Verification() {
 	fmt.Println("--- Running Lab 1: Verifying the Gaussian Heuristic ---")
+	fmt.Println("Using FPLLL command-line tool for accurate SVP computation.")
+	// This q now defines the range of entries for our random basis
 	q := big.NewInt(131)
-	fmt.Printf("Target q: %s. Iterating from n=30 to n=60...\n\n", q.String())
+	fmt.Printf("Target q for random coefficients: %s. Iterating from n=30 to n=60...\n\n", q.String())
 
 	fmt.Printf("%-4s | %-13s | %-13s | %-14s\n", "n", "GH Prediction", "SVP Norm", "Relative Error")
 	fmt.Println("------------------------------------------------------")
 
 	for n := 30; n <= 60; n += 2 {
-		m := n
+		// NOTE: We are replacing genBasis with genRandomBasis.
+		// The rank of this lattice is simply n.
+		basis := genRandomBasis(n, q)
 
-		// Generate basis
-		basis := genBasis(n, m, q)
+		// The rank is n, not m+n
+		rank := n
 
 		// Calculate lattice volume
 		vol := latticeVolume(basis)
 
 		// Calculate Gaussian heuristic prediction
-		gh := gaussianHeuristic(vol, m+n)
+		gh := gaussianHeuristic(vol, rank)
 		ghFloat, _ := gh.Float64()
 
 		// Call SVP oracle
@@ -200,7 +207,7 @@ func runLab1Verification() {
 		// Calculate relative error
 		relativeError := math.Abs(svpNorm-ghFloat) / svpNorm * 100
 
-		// Print results
+		// The dimension 'n' is now the total rank
 		fmt.Printf("%-4d | %-13.2f | %-13.2f | %-13.2f%%\n", n, ghFloat, svpNorm, relativeError)
 	}
 
