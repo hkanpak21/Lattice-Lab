@@ -1,0 +1,174 @@
+# Lattice Heuristics Lab in Go
+
+This project implements two fundamental lattice cryptography experiments in Go:
+- **Lab 1**: Verifying the Gaussian Heuristic
+- **Lab 2**: Verifying the Geometric Series Assumption
+
+## Current Implementation Status
+
+✅ **Fully Functional**: The code compiles and runs with simulated lattice operations  
+⚠️ **Requires fplll**: For optimal accuracy, install the fplll library (see setup below)
+
+## Quick Start
+
+1. **Clone and build:**
+   ```bash
+   go mod tidy
+   go build -o lattice-labs
+   ./lattice-labs
+   ```
+
+2. **Sample output:**
+   ```
+   === Lattice Heuristics Lab Implementation ===
+
+   --- Running Lab 1: Verifying the Gaussian Heuristic ---
+   Target q: 131. Iterating from n=30 to n=60...
+
+   n    | GH Prediction | SVP Norm      | Relative Error
+   ------------------------------------------------------
+   30   | 21.45         | 489.50        | 95.62%
+   32   | 22.16         | 455.95        | 95.14%
+   ...
+   ```
+
+## Architecture
+
+### File Structure
+```
+├── main.go      # Entry point - orchestrates both labs
+├── lab1.go      # Gaussian Heuristic verification
+├── lab2.go      # Geometric Series Assumption verification
+├── go.mod       # Go module dependencies
+└── README.md    # This file
+```
+
+### Dependencies
+- **gonum.org/v1/gonum/mat**: Matrix operations
+- **crypto/rand**: Cryptographically secure random number generation
+- **math/big**: Arbitrary precision arithmetic
+- **fplll** (optional): High-performance lattice algorithms
+
+## Lab 1: Gaussian Heuristic Verification
+
+**Objective**: Compare predicted vs. actual shortest vector norms in q-ary lattices.
+
+### Key Functions:
+- `genBasis(n, m, q)`: Generates q-ary lattice basis matrix
+- `latticeVolume(basis)`: Computes lattice volume via determinant
+- `gaussianHeuristic(vol, rank)`: Predicts shortest vector norm
+- `svpOracle(basis, radius)`: Finds actual shortest vector (simulated)
+
+### Mathematical Foundation:
+The Gaussian Heuristic predicts: 
+```
+GH(L) = √(n/(2πe)) × vol(L)^(1/n)
+```
+
+## Lab 2: Geometric Series Assumption
+
+**Objective**: Analyze basis profile after BKZ reduction for linearity.
+
+### Key Functions:
+- `runBKZ(basis, beta)`: Performs BKZ reduction (simulated)
+- `genRandomBasis(rank)`: Creates random lattice basis
+
+### Expected Behavior:
+BKZ-reduced basis should show linear decay in log₂(‖b*ᵢ‖) profile.
+
+## Full fplll Integration Setup
+
+For maximum accuracy, install the fplll library:
+
+### macOS:
+```bash
+# Install dependencies
+brew install gmp mpfr
+
+# Install fplll
+git clone https://github.com/fplll/fplll.git
+cd fplll
+./autogen.sh
+./configure --prefix=/usr/local
+make
+sudo make install
+```
+
+### Ubuntu/Debian:
+```bash
+# Install dependencies
+sudo apt-get update
+sudo apt-get install build-essential libgmp-dev libmpfr-dev
+
+# Install fplll
+git clone https://github.com/fplll/fplll.git
+cd fplll
+./autogen.sh
+./configure
+make
+sudo make install
+sudo ldconfig
+```
+
+### Activate fplll Integration:
+After installing fplll, uncomment the cgo blocks in `lab1.go` and `lab2.go`:
+
+```go
+// Change this:
+// /*
+// #cgo LDFLAGS: -lfplll
+// #include <fplll.h>
+// */
+// import "C"
+
+// To this:
+/*
+#cgo LDFLAGS: -lfplll
+#include <fplll.h>
+*/
+import "C"
+```
+
+## Implementation Details
+
+### Current Simulation vs. Full Implementation
+
+| Component | Current Status | With fplll |
+|-----------|----------------|-------------|
+| Basis Generation | ✅ Complete | ✅ Complete |
+| Volume Calculation | ✅ Complete | ✅ Complete |
+| Gaussian Heuristic | ✅ Complete | ✅ Complete |
+| SVP Oracle | 🔄 Simulated | ✅ LLL + Enumeration |
+| BKZ Reduction | 🔄 Simulated | ✅ True BKZ |
+
+### Simulation Accuracy
+- **Lab 1**: Currently uses first basis vector norm as SVP approximation
+- **Lab 2**: Applies decay function to simulate BKZ profile behavior
+- **With fplll**: Uses industrial-strength LLL, BKZ, and enumeration algorithms
+
+## Educational Value
+
+This implementation demonstrates:
+1. **q-ary lattice construction** for cryptographic applications
+2. **Gaussian Heuristic validation** across multiple dimensions
+3. **BKZ reduction behavior** and the Geometric Series Assumption
+4. **Go+C integration** via cgo for performance-critical operations
+5. **Arbitrary precision arithmetic** for large integer lattices
+
+## Future Enhancements
+
+- [ ] Add visualization of Lab 2 profiles
+- [ ] Implement additional lattice algorithms (ENUM, SVP solvers)
+- [ ] Add timing benchmarks
+- [ ] Support for different q values and lattice types
+- [ ] Statistical analysis of multiple runs
+
+## References
+
+1. **Gaussian Heuristic**: Schnorr, C.P. "A hierarchy of polynomial time lattice basis reduction algorithms"
+2. **BKZ Algorithm**: Schnorr, C.P. and Euchner, M. "Lattice basis reduction: Improved practical algorithms"
+3. **fplll Library**: https://github.com/fplll/fplll
+
+---
+
+**Note**: This implementation prioritizes educational clarity and correct mathematical foundations. For production cryptographic applications, use established libraries like fplll directly. 
