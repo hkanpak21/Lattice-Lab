@@ -160,7 +160,7 @@ func runLab2Verification() {
 	fmt.Println("Using FPLLL command-line tool for accurate BKZ reduction.")
 
 	rank := 30
-	beta := 20
+	beta := 28 // Increased from 20 to 28 for clearer GSA profile
 	// Use a large prime for the coefficient range to ensure a "hard" lattice
 	q := big.NewInt(100003) // A reasonably large prime
 

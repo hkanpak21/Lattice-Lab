@@ -4,12 +4,6 @@ This project implements two fundamental lattice cryptography experiments in Go u
 - **Lab 1**: Verifying the Gaussian Heuristic
 - **Lab 2**: Verifying the Geometric Series Assumption
 
-## Implementation Status
-
-🚀 **Production Ready**: Real fplll integration via command-line tools  
-✅ **Scientific Accuracy**: Verified accurate results using industry-standard algorithms  
-🎯 **Research Quality**: Suitable for academic research and cryptographic analysis
-
 ## Quick Start
 
 **Prerequisites**: fplll must be installed (see installation instructions below)
@@ -26,18 +20,40 @@ go build -o lattice-labs
 
 --- Running Lab 1: Verifying the Gaussian Heuristic ---
 Using FPLLL command-line tool for accurate SVP computation.
-Target q: 131. Iterating from n=30 to n=60...
+Target q for random coefficients: 131. Iterating from n=30 to n=60...
 
 n    | GH Prediction | SVP Norm      | Relative Error
 ------------------------------------------------------
-30   | 21.45         | 32.18         | 33.33%        ← Scientifically accurate!
-32   | 22.16         | 33.23         | 33.33%
-...
+30   | 169.68        | 173.41        | 2.15         %
+32   | 186.96        | 177.32        | 5.44         %
+34   | 193.09        | 198.76        | 2.85         %
+36   | 217.00        | 208.69        | 3.98         %
+38   | 224.33        | 239.04        | 6.15         %
+40   | 238.31        | 222.41        | 7.15         %
+42   | 239.70        | 246.48        | 2.75         %
+44   | 258.52        | 257.58        | 0.37         %
+46   | 255.42        | 247.64        | 3.14         %
+48   | 284.47        | 269.75        | 5.46         %
+50   | 284.95        | 252.14        | 13.01        %
+52   | 285.02        | 271.92        | 4.82         %
+54   | 299.85        | 287.36        | 4.35         %
+56   | 317.22        | 263.95        | 20.18        %
+58   | 324.84        | 272.57        | 19.18        %
+60   | 337.70        | 294.92        | 14.51        %
+
+Lab 1 finished.
 
 --- Running Lab 2: Verifying the Geometric Series Assumption ---
 Using FPLLL command-line tool for accurate BKZ reduction.
+Generating a random lattice of rank 30 with coefficients up to 100003.
+Running BKZ reduction with block size beta = 28...
+BKZ finished.
 Basis Profile (log2 of Gram-Schmidt norms):
-[7.87, 7.87, 7.83, 7.80, 7.76, 7.70, ...]    ← Clear linear decay!
+[17.18, 17.15, 17.09, 17.10, 17.03, 17.00, 17.01, 16.96, 16.93, 16.91, 16.84, 16.73, 16.74, 16.74, 16.68, 16.61, 16.58, 16.53, 16.45, 16.42, 16.42, 16.42, 16.30, 16.19, 16.18, 16.13, 16.13, 16.08, 15.97, 16.28]
+
+Lab 2 finished. Plot this profile data to visually check for linearity.
+
+=== All experiments completed ===
 ```
 
 ## Architecture
